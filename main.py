@@ -35,7 +35,22 @@ async def initiateDB():
 
 
 
-async def updateData(message_id, id, message, date, type):
+async def deleteData(message_id):
+    while True:
+        try:
+            async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
+                cursor = await conn.cursor()
+                await cursor.execute('''DELETE FROM ChatsAndAccounts
+                                      WHERE message_id = ?''',
+                                     (message_id,))
+                await conn.commit()
+                break
+        except Exception as error:
+            print(error)
+            logging.error(error)
+            await asyncio.sleep(0.5)
+
+async def addData(message_id, id, message, date, type):
     while True:
         try:
             async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
@@ -50,12 +65,14 @@ async def updateData(message_id, id, message, date, type):
             logging.error(error)
             await asyncio.sleep(0.5)
 
+
+
 async def getData():
     while True:
         try:
             async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
                 cursor = await conn.cursor()
-                await cursor.execute("SELECT account_id, message, date, type FROM ChatsAndAccounts")
+                await cursor.execute("SELECT message_id, account_id, message, date, type FROM ChatsAndAccounts")
                 rows = await cursor.fetchall()
                 return rows
         except:
@@ -73,7 +90,7 @@ async def runClient(client, token):
     print("start")
     async def show_tasks(event):
         print("hey", messages)
-        for usr_id, task, date, type in messages:
+        for message_id, usr_id, task, date, type in messages:
             if  str(event.peer_id.user_id) == str(usr_id):
                 await event.reply("you have '" + task + "' task on " + str(datetime.datetime.fromtimestamp(date)))
 
@@ -88,10 +105,10 @@ async def runClient(client, token):
                 datetime_object = datetime.datetime.strptime(' '.join(date), '%Y-%m-%d %H:%M:%S')
                 sec_date = datetime_object.timestamp()
                 hour_before = datetime.datetime.fromtimestamp(sec_date - 60 * 60)
-                messages.append( (event.peer_id.user_id, task, sec_date, "event") ) 
+                messages.append( (event.message.id, event.peer_id.user_id, task, sec_date, "event") ) 
                 await event.reply(task)
                 await event.reply(str(hour_before))  
-                await updateData(event.message.id, event.peer_id.user_id, task, sec_date, "event")
+                await addData(event.message.id, event.peer_id.user_id, task, sec_date, "event")
 
             except Exception as exc:
                 print(exc)
@@ -105,6 +122,16 @@ async def runClient(client, token):
         if enable:
             logging.info(f'Account answered to {event.chat_id}')
 
+    while True:
+        now = int(time.time())
+        for message_id, usr_id, message, date, type in messages[:]:
+            if now > date:
+                await deleteData(message_id)
+                messages.remove((message_id, usr_id, message, date, type))
+                await client.send_message(usr_id, message)
+                print(messages)
+            
+        await asyncio.sleep(60)
 
 
     await client.run_until_disconnected()
