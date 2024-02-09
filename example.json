@@ -1,0 +1,12 @@
+{
+    "API_ID" : "00000000",
+    "API_HASH" : "string",
+    "TOKEN" : "000000:string",
+    "answer": "text to answer on non-commands messages",
+    "logging": {
+      "enable": "true"
+    },
+    "pathes": {
+      "project_path": "C:\\..\\.."
+    }
+  }

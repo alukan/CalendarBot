@@ -17,6 +17,10 @@ year = today.year
 logging.basicConfig(filename=f'logs/{year}-{day}-{month}-main.log', level=logging.INFO, format=log_format)
 
 async def initiateDB():
+     """
+     function creates DB for scheduled messages if it isn't created
+       and takes data from this DB
+     """
      async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
         cursor = await conn.cursor()
         await cursor.execute('''
@@ -36,6 +40,9 @@ async def initiateDB():
 
 
 async def deleteData(message_id):
+    """
+     Deletes event from DB
+     """
     while True:
         try:
             async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
@@ -51,6 +58,9 @@ async def deleteData(message_id):
             await asyncio.sleep(0.5)
 
 async def addData(message_id, id, message, date, type):
+    """
+     Adds event to DB
+     """
     while True:
         try:
             async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
@@ -68,6 +78,9 @@ async def addData(message_id, id, message, date, type):
 
 
 async def getData():
+    """
+     returns data saved in DB
+     """
     while True:
         try:
             async with aiosqlite.connect('ChatsAndAccounts.db') as conn:
@@ -83,20 +96,22 @@ def check (e):
 
 
 
-async def runClient(client, token):
+async def runClient(client, token, answer):
+    """
+     Main function that runs bot and has handlers for some events
+     """
     await client.start(bot_token = token)
-
-    answer = "Hello, I am a bot, if you want to put new event type /add message YYYY-MM-DD HH:MM:SS"
+    
     print("start")
     async def show_tasks(event):
-        print("hey", messages)
         for message_id, usr_id, task, date, type in messages:
-            if  str(event.peer_id.user_id) == str(usr_id):
-                await event.reply("you have '" + task + "' task on " + str(datetime.datetime.fromtimestamp(date)))
+            if  str(event.peer_id.user_id) == str(usr_id) and type == "event":
+                await event.reply("you have '" + task + "' on " + str(datetime.datetime.fromtimestamp(date)))
 
-
+ 
     @client.on(events.NewMessage(incoming=True, func=check))
     async def handler(event):
+        
         if (event.message.text[0:4] == "/add"):
             try:
                 task = ' '.join(event.message.text.split(" ")[1:-2])
@@ -104,20 +119,49 @@ async def runClient(client, token):
 
                 datetime_object = datetime.datetime.strptime(' '.join(date), '%Y-%m-%d %H:%M:%S')
                 sec_date = datetime_object.timestamp()
-                hour_before = datetime.datetime.fromtimestamp(sec_date - 60 * 60)
+                if sec_date < int(time.time()):
+                    await client.send_message(int(event.peer_id.user_id), "can't schedule in past")
+                    raise ValueError("can't schedule in past")
+                
                 messages.append( (event.message.id, event.peer_id.user_id, task, sec_date, "event") ) 
-                await event.reply(task)
-                await event.reply(str(hour_before))  
                 await addData(event.message.id, event.peer_id.user_id, task, sec_date, "event")
-
+                
+                if sec_date - 60 * 60 > int(time.time()):
+                    messages.append( (event.message.id + sec_date - 60 * 60, event.peer_id.user_id, task + " in an hour", sec_date - 60 * 60, "notification") )
+                    await addData (event.message.id + sec_date - 60 * 60, event.peer_id.user_id, task + " in an hour", sec_date - 60 * 60, "notification")
+                    
+                if sec_date - 2 * 60 * 60 > int(time.time()):
+                    messages.append( (event.message.id + sec_date - 2 * 60 * 60, event.peer_id.user_id, task + " in 2 hours", sec_date - 2* 60 * 60, "notification") )  
+                    await addData (event.message.id + sec_date - 2 * 60 * 60, event.peer_id.user_id, task + " in 2 hours", sec_date - 2 * 60 * 60, "notification")
+            
+                await event.reply("your event " + task + " is scheduled on " + str(' '.join(date)))  
             except Exception as exc:
                 print(exc)
                 await event.reply("wrong format") 
+                logging.info(f'{event.chat_id} tried to add task with wrong format')
         elif (event.message.text[0:5] == "/show"):
-            print("start show")
             await show_tasks(event)
+            logging.info(f'Showed tasks to {event.chat_id}')
+
+        elif (event.message.text[0:7] == "/delete"):
+            try:
+                task = ' '.join(event.message.text.split(" ")[1:-2])
+                date = event.message.text.split(" ")[-2:]
+
+                datetime_object = datetime.datetime.strptime(' '.join(date), '%Y-%m-%d %H:%M:%S')
+                sec_date = datetime_object.timestamp()
+
+                for message_id, usr_id, message, date, type in messages[:]:
+                    if task == message and date == sec_date:
+                        await deleteData(message_id)
+                        messages.remove((message_id, usr_id, message, date, type))
+                        await client.send_message(int(usr_id), message + " deleted")
+            except Exception as exc:
+                print(exc)
+                await event.reply("wrong format") 
+                logging.info(f'{event.chat_id} tried to delete task with wrong format')
+            
         else:
-            print(event.message.text[0:4])
             await event.reply(answer)
         if enable:
             logging.info(f'Account answered to {event.chat_id}')
@@ -128,10 +172,9 @@ async def runClient(client, token):
             if now > date:
                 await deleteData(message_id)
                 messages.remove((message_id, usr_id, message, date, type))
-                await client.send_message(usr_id, message)
-                print(messages)
+                await client.send_message(int(usr_id), message)
             
-        await asyncio.sleep(60)
+        await asyncio.sleep(10)
 
 
     await client.run_until_disconnected()
@@ -146,7 +189,8 @@ async def main():
     token = data['TOKEN']
     global enable
     enable = data['logging']['enable'] == "true"
-    await asyncio.gather(runClient(TelegramClient('bot', id, hash), token))
+    answer = data['answer']
+    await asyncio.gather(runClient(TelegramClient('bot', id, hash), token, answer))
 
 
 if __name__ == "__main__":
